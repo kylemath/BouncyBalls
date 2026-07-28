@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Circle Drop — Gradient Balls</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;1,9..40,400&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="app">
+      <header class="top">
+        <div class="brand-block">
+          <h1 class="brand">Circle Drop</h1>
+          <p class="tagline">
+            Balls keep the color of where they started — watch the packing scramble the gradient.
+            Pick a vessel (try the waveguide chain, rosette, or resonance ring —
+            chambers coupled through open windows), then
+            <strong>click anywhere inside</strong> to launch the cluster from that spot.
+          </p>
+        </div>
+        <div class="stats" aria-live="polite">
+          <span id="stat-count">0 balls</span>
+          <span class="dot" aria-hidden="true"></span>
+          <span id="stat-steps" title="Physics steps since last restart">0 steps</span>
+          <span class="dot" aria-hidden="true"></span>
+          <span id="stat-fps">— fps</span>
+        </div>
+      </header>
+
+      <main class="stage-wrap">
+        <canvas id="stage" aria-label="Ball physics simulation"></canvas>
+        <div class="rim-glow" aria-hidden="true"></div>
+      </main>
+
+      <aside class="panel" aria-label="Simulation settings">
+        <h2>Settings</h2>
+
+        <label class="field">
+          <span class="field-head"><span>Preset</span></span>
+          <select id="preset-select"></select>
+        </label>
+
+        <div class="actions">
+          <button type="button" id="btn-save-preset" class="btn">Save preset</button>
+          <button type="button" id="btn-delete-preset" class="btn">Delete</button>
+        </div>
+
+        <label class="field">
+          <span class="field-head">
+            <span>Balls</span>
+            <output id="balls-out" for="balls">4096</output>
+          </span>
+          <input
+            id="balls"
+            type="range"
+            min="1"
+            max="21"
+            step="1"
+            value="12"
+          />
+          <span class="hint">2<sup>n</sup> — from 2 up to ~2M balls (watch the fps meter)</span>
+        </label>
+
+        <label class="field">
+          <span class="field-head">
+            <span>Ball size</span>
+            <output id="size-out" for="size">0.40×</output>
+          </span>
+          <input id="size" type="range" min="0.1" max="2" step="0.05" value="0.4" />
+        </label>
+
+        <label class="field">
+          <span class="field-head">
+            <span>Packing radius</span>
+            <output id="pack-out" for="pack">0.45×</output>
+          </span>
+          <input id="pack" type="range" min="0.15" max="3" step="0.05" value="0.45" />
+          <span class="hint">How tightly balls cluster at spawn</span>
+        </label>
+
+        <label class="field">
+          <span class="field-head">
+            <span>Heading</span>
+            <output id="heading-out" for="heading">90°</output>
+          </span>
+          <input
+            id="heading"
+            type="range"
+            min="0"
+            max="359"
+            step="1"
+            value="90"
+          />
+          <span class="hint">Shared launch direction — applied on Restart / click-to-place</span>
+        </label>
+
+        <label class="field">
+          <span class="field-head">
+            <span>Velocity</span>
+            <output id="velocity-out" for="velocity">2.50×</output>
+          </span>
+          <input
+            id="velocity"
+            type="range"
+            min="-1"
+            max="2"
+            step="0.005"
+            value="0.39794"
+          />
+          <span class="hint">0.1×–100× (log scale) — fast-forward without resetting the run</span>
+        </label>
+
+        <label class="field toggle-field">
+          <span class="field-head"><span>Ball collisions</span></span>
+          <label class="switch">
+            <input id="collide" type="checkbox" />
+            <span class="switch-track" aria-hidden="true"></span>
+          </label>
+          <span class="hint" id="collide-hint">Off: balls pass through each other like the video</span>
+        </label>
+
+        <label class="field">
+          <span class="field-head"><span>Color by</span></span>
+          <select id="color-mode">
+            <option value="xy">Original X → Y gradient</option>
+            <option value="x">Original X only</option>
+            <option value="y">Original Y only</option>
+            <option value="angle" selected>Spawn angle</option>
+            <option value="index">Spawn order</option>
+          </select>
+        </label>
+
+        <label class="field toggle-field">
+          <span class="field-head"><span>Trails (long exposure)</span></span>
+          <label class="switch">
+            <input id="trails" type="checkbox" />
+            <span class="switch-track" aria-hidden="true"></span>
+          </label>
+          <span class="hint">
+            Fades old frames instead of clearing — the caustic “ghost highways”
+            paint themselves as glowing streaks. Nudge Velocity to tune them.
+          </span>
+        </label>
+
+        <label class="field toggle-field">
+          <span class="field-head"><span>Sheet (folding ribbon)</span></span>
+          <label class="switch">
+            <input id="sheet" type="checkbox" />
+            <span class="switch-track" aria-hidden="true"></span>
+          </label>
+          <span class="hint" id="sheet-hint">
+            Spawns a connected lattice and draws it as a solid deforming sheet —
+            it folds and bounces like taffy instead of thinning into sparse dots.
+            Overrides the spawn layout; the Balls slider sets the mesh resolution.
+          </span>
+        </label>
+
+        <label class="field">
+          <span class="field-head"><span>Sheet gradient</span></span>
+          <select id="sheet-color">
+            <option value="uv" selected>Lattice U → V (2D ink)</option>
+            <option value="u">Horizontal rainbow (U)</option>
+            <option value="v">Vertical rainbow (V)</option>
+            <option value="diag">Diagonal rainbow</option>
+            <option value="radial">Radial from center</option>
+            <option value="angle">Lattice angle</option>
+            <option value="xy">Birth position (like balls)</option>
+          </select>
+          <span class="hint">
+            Painted on the material itself — folds stretch the ink so deformation stays readable.
+          </span>
+        </label>
+
+        <label class="field toggle-field">
+          <span class="field-head"><span>3D mode</span></span>
+          <label class="switch">
+            <input id="mode3d" type="checkbox" />
+            <span class="switch-track" aria-hidden="true"></span>
+          </label>
+          <span class="hint" id="mode3d-hint">
+            Runs the whole simulation inside a closed 3D chamber so the sheet can
+            fold through a real third dimension instead of self-intersecting on a plane.
+            Drag the canvas to orbit the camera. Sheet toggle picks a folding sheet vs.
+            a particle cloud; Balls sets resolution, Velocity sets speed.
+          </span>
+        </label>
+
+        <label class="field">
+          <span class="field-head"><span>3D chamber</span></span>
+          <select id="chamber3d">
+            <option value="sphere" selected>Sphere</option>
+            <option value="cube">Cube</option>
+            <option value="cylinder">Cylinder</option>
+          </select>
+          <span class="hint">Only used while 3D mode is on.</span>
+        </label>
+
+        <label class="field toggle-field">
+          <span class="field-head"><span>Auto-rotate camera</span></span>
+          <label class="switch">
+            <input id="autorotate3d" type="checkbox" checked />
+            <span class="switch-track" aria-hidden="true"></span>
+          </label>
+          <span class="hint">Slowly spins the view; dragging the canvas turns it off.</span>
+        </label>
+
+        <label class="field">
+          <span class="field-head"><span>Vessel</span></span>
+          <select id="vessel">
+            <option value="circle">Circle</option>
+            <option value="ellipse">Ellipse</option>
+            <option value="stadium">Stadium billiard</option>
+            <option value="annulus">Annulus (ring)</option>
+            <option value="twin" selected>Twin chambers + window</option>
+            <option value="triad">Triple resonance</option>
+            <option value="chain">Waveguide chain</option>
+            <option value="flower">Rosette (hub + petals)</option>
+            <option value="necklace">Resonance ring</option>
+          </select>
+          <span class="hint" id="vessel-hint">
+            Two resonance chambers joined by an open window — watch beams tunnel between lobes.
+          </span>
+        </label>
+
+        <label class="field">
+          <span class="field-head"><span>Spawn layout</span></span>
+          <select id="spawn">
+            <option value="gaussian" selected>Tight Gaussian cluster</option>
+            <option value="grid">Packed grid</option>
+            <option value="line">Horizontal line</option>
+            <option value="rain">Filled block</option>
+            <option value="ring">Ring near rim</option>
+            <option value="star">Star outline</option>
+            <option value="arc">Arc band</option>
+          </select>
+        </label>
+
+        <label class="field toggle-field">
+          <span class="field-head"><span>Revival orbit</span></span>
+          <label class="switch">
+            <input id="orbit" type="checkbox" />
+            <span class="switch-track" aria-hidden="true"></span>
+          </label>
+          <span class="hint" id="orbit-hint">
+            Launches every ball tangent to a shared inner circle so the shape
+            dissolves and then exactly re-forms on a fixed cycle. Circle vessel only.
+          </span>
+        </label>
+
+        <div class="field" id="orbit-params" hidden>
+          <span class="field-head">
+            <span>Rotation p / q</span>
+            <output id="orbit-out" for="orbit-p">1 / 5</output>
+          </span>
+          <input id="orbit-p" type="range" min="1" max="8" step="1" value="1" />
+          <input id="orbit-q" type="range" min="3" max="16" step="1" value="5" />
+          <span class="hint" id="orbit-period">—</span>
+        </div>
+
+        <div class="actions">
+          <button type="button" id="btn-restart" class="btn primary">Restart</button>
+          <button type="button" id="btn-pause" class="btn">Pause</button>
+        </div>
+
+        <p class="credit">
+          Inspired by
+          <a
+            href="https://www.youtube.com/watch?v=7IE2kM6vyAw"
+            target="_blank"
+            rel="noopener noreferrer"
+            >2²⁷ balls in a circle</a
+          >
+          — colors lock to birth position so mixing stays readable.
+        </p>
+      </aside>
+    </div>
+    <script type="module" src="app.js"></script>
+  </body>
+</html>
