@@ -263,6 +263,42 @@
           <span class="hint" id="orbit-period">—</span>
         </div>
 
+        <label class="field toggle-field">
+          <span class="field-head"><span>Circle illusion (Tusi couple)</span></span>
+          <label class="switch">
+            <input id="illusion" type="checkbox" />
+            <span class="switch-track" aria-hidden="true"></span>
+          </label>
+          <span class="hint" id="illusion-hint">
+            The “Crazy Circle” illusion. Every dot really travels a straight line
+            through the center, yet together they trace a circle — one that passes
+            through the center and touches the rim — which appears to spin. Circle
+            vessel only. Balls = number of dots; Velocity = spin speed.
+          </span>
+        </label>
+
+        <label class="field toggle-field" id="relay-field" hidden>
+          <span class="field-head"><span>Relay launch (staggered)</span></span>
+          <label class="switch">
+            <input id="relay" type="checkbox" />
+            <span class="switch-track" aria-hidden="true"></span>
+          </label>
+          <span class="hint">
+            Balls line up on the outer rim sharing one heading angle, then fire one
+            after another — each waits for the one before it to pass center, so they
+            weave through the middle in turn and appear to dance. Best with few balls.
+          </span>
+        </label>
+
+        <div class="field" id="relay-params" hidden>
+          <span class="field-head">
+            <span>Relay delay</span>
+            <output id="relay-out" for="relay-phase">0.25 × period</output>
+          </span>
+          <input id="relay-phase" type="range" min="0.05" max="1" step="0.05" value="0.25" />
+          <span class="hint" id="relay-hint">Gap between each ball's launch, as a fraction of the revival period.</span>
+        </div>
+
         <div class="actions">
           <button type="button" id="btn-restart" class="btn primary">Restart</button>
           <button type="button" id="btn-pause" class="btn">Pause</button>

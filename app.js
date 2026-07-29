@@ -43,6 +43,14 @@ const ui = {
   orbitOut: document.getElementById("orbit-out"),
   orbitPeriod: document.getElementById("orbit-period"),
   orbitHint: document.getElementById("orbit-hint"),
+  relay: document.getElementById("relay"),
+  relayField: document.getElementById("relay-field"),
+  relayParams: document.getElementById("relay-params"),
+  relayPhase: document.getElementById("relay-phase"),
+  relayOut: document.getElementById("relay-out"),
+  relayHint: document.getElementById("relay-hint"),
+  illusion: document.getElementById("illusion"),
+  illusionHint: document.getElementById("illusion-hint"),
   restart: document.getElementById("btn-restart"),
   pause: document.getElementById("btn-pause"),
   presetSelect: document.getElementById("preset-select"),
@@ -95,6 +103,22 @@ const state = {
   orbitBounces: 0,
   orbitPeriod: 0,
   orbitCaustic: 0,
+  /** Relay launch: balls wait on the rim and fire one-by-one, staggered in time. */
+  relay: false,
+  /** Gap between consecutive launches as a fraction of the revival period. */
+  relayPhase: 0.25,
+  /** Per-ball sim-time (seconds) at which each ball is released; null when off. */
+  startAt: null,
+  /** Elapsed running time (seconds) used to gate relay launches. */
+  simTime: 0,
+  /** Crazy-Circle (Tusi couple) illusion: dots ride diameters, forming a rotating circle. */
+  illusion: false,
+  /** Accumulated rotation phase (radians) of the illusion circle. */
+  illPhase: 0,
+  /** Angular speed (rad/s) of the illusion circle, derived from the velocity slider. */
+  illOmega: 0,
+  /** Oscillation amplitude (px) — the playable radius, so dots touch the rim and center. */
+  illAmp: 0,
   x: null,
   y: null,
   vx: null,
@@ -208,16 +232,32 @@ function updateVesselHint() {
   ui.orbitHint.textContent = circleOnly
     ? "Launches every ball tangent to a shared inner circle so the shape dissolves and then exactly re-forms on a fixed cycle."
     : "Revival orbit needs a circular vessel — switch Vessel back to Circle to enable.";
+
+  ui.illusion.disabled = !circleOnly;
+  if (!circleOnly && ui.illusion.checked) {
+    ui.illusion.checked = false;
+    state.illusion = false;
+  }
 }
 
 function updateOrbitReadout() {
   ui.orbitParams.hidden = !ui.orbit.checked;
+  // Relay only makes sense on top of a revival orbit, so reveal it with orbit.
+  ui.relayField.hidden = !ui.orbit.checked;
+  ui.relayParams.hidden = !(ui.orbit.checked && ui.relay.checked);
+  const frac = Number(ui.relayPhase.value);
+  ui.relayOut.textContent = `${frac.toFixed(2)} × period`;
   if (!ui.orbit.checked) return;
   const g = orbitGeometry();
   ui.orbitOut.textContent = `${g.p} / ${g.q}`;
   const t = g.period;
   const timeText = t >= 1 ? `${t.toFixed(2)} s` : `${(t * 1000).toFixed(0)} ms`;
   ui.orbitPeriod.textContent = `Re-forms every ${g.bounces} bounces ≈ ${timeText} per cycle`;
+  if (ui.relay.checked) {
+    const d = frac * g.period;
+    const dText = d >= 1 ? `${d.toFixed(2)} s` : `${(d * 1000).toFixed(0)} ms`;
+    ui.relayHint.textContent = `Each ball waits ${dText} (${frac.toFixed(2)}× period) behind the previous — one crosses center before the next launches.`;
+  }
 }
 
 function updateCollideHint(n) {
@@ -888,6 +928,44 @@ const BUILTIN_PRESETS = [
     },
   },
   {
+    id: "builtin:duet",
+    name: "Center Duet (relay)",
+    builtin: true,
+    values: {
+      ballsExp: 1, // 2 balls
+      size: 1.2,
+      pack: 1,
+      heading: 90,
+      velocity: 1,
+      collide: false,
+      colorMode: "angle",
+      vessel: "circle",
+      spawn: "gaussian",
+      orbit: true,
+      orbitP: 1,
+      orbitQ: 2, // rho = 1/2 → straight diameters through center
+      relay: true,
+      relayPhase: 0.25,
+    },
+  },
+  {
+    id: "builtin:crazycircle",
+    name: "Crazy Circle Illusion",
+    builtin: true,
+    values: {
+      ballsExp: 3, // 8 dots
+      size: 1.4,
+      pack: 1,
+      heading: 90,
+      velocity: 0.6,
+      collide: false,
+      colorMode: "angle",
+      vessel: "circle",
+      spawn: "gaussian",
+      illusion: true,
+    },
+  },
+  {
     id: "builtin:twin",
     name: "Coupled Chambers",
     builtin: true,
@@ -1021,6 +1099,9 @@ function currentSettingsSnapshot() {
     orbit: ui.orbit.checked,
     orbitP: Number(ui.orbitP.value),
     orbitQ: Number(ui.orbitQ.value),
+    relay: ui.relay.checked,
+    relayPhase: Number(ui.relayPhase.value),
+    illusion: ui.illusion.checked,
   };
 }
 
@@ -1037,6 +1118,9 @@ function applyPresetValues(values) {
   ui.orbit.checked = !!values.orbit && ui.vessel.value === "circle";
   if (values.orbitP != null) ui.orbitP.value = String(values.orbitP);
   if (values.orbitQ != null) ui.orbitQ.value = String(values.orbitQ);
+  ui.relay.checked = !!values.relay && ui.orbit.checked;
+  if (values.relayPhase != null) ui.relayPhase.value = String(values.relayPhase);
+  ui.illusion.checked = !!values.illusion && ui.vessel.value === "circle";
 
   // A preset restarts the run from its own center, ignoring any clicked spot.
   state.spawnNX = 0;
@@ -1268,6 +1352,17 @@ function rebuild(count) {
   state.spawn = ui.spawn.value;
   state.orbit = ui.orbit.checked && state.vessel === "circle";
   state.sheet = ui.sheet.checked;
+  state.illusion = ui.illusion.checked && state.vessel === "circle";
+
+  // The Crazy-Circle illusion is its own kinematic mode; it overrides the billiard
+  // spawn/orbit paths (but still needs the circle vessel).
+  if (state.illusion) {
+    state.sheet = false;
+    state.orbit = false;
+    state.collideBalls = false;
+    // Keep the dot count sane — this reads as a rotating ring, not a dense cloud.
+    count = Math.max(2, Math.min(512, count));
+  }
 
   // Sheet mode needs a perfect square lattice with fixed connectivity, and the
   // per-node ball–ball collisions would just shred the mesh, so force them off.
@@ -1280,8 +1375,14 @@ function rebuild(count) {
     state.orbit = false;
   }
 
+  // Relay staggering rides on top of a revival orbit (both need the circle vessel).
+  state.relay = ui.relay.checked && state.orbit && !state.illusion;
+  state.relayPhase = Number(ui.relayPhase.value);
+
   state.count = count;
   state.stepCount = 0;
+  state.simTime = 0;
+  state.startAt = state.relay ? new Float32Array(count) : null;
   vesselCache = null;
   imageData = null; // start any long-exposure trail fresh on a new run
   applyRadii();
@@ -1296,8 +1397,12 @@ function rebuild(count) {
   state.colors = new Uint32Array(n);
   state.next = new Int32Array(n);
 
-  if (state.sheet) {
+  if (state.illusion) {
+    buildIllusion(n);
+  } else if (state.sheet) {
     buildSheetLattice(n);
+  } else if (state.relay) {
+    buildRelayOrbit(n);
   } else if (state.orbit) {
     buildRevivalOrbit(n);
   } else {
@@ -1454,6 +1559,92 @@ function buildRevivalOrbit(n) {
     state.vx[i] = Math.cos(delta) * speed;
     state.vy[i] = Math.sin(delta) * speed;
     state.colors[i] = colorFromOrigin(x, y, i, n);
+  }
+}
+
+/**
+ * Relay variant of the revival orbit: every ball starts parked on the outer rim
+ * with the *same* heading angle relative to its radius (straight through center
+ * when the caustic is 0, otherwise tangent to the shared caustic). Balls are then
+ * released one after another, each `relayPhase × period` behind the previous, so
+ * they cross the center in sequence and "dance" instead of piling up at once.
+ */
+function buildRelayOrbit(n) {
+  const g = orbitGeometry();
+  state.orbitBounces = g.bounces;
+  state.orbitPeriod = g.period;
+  state.orbitCaustic = g.caustic;
+
+  const cx = state.cx;
+  const cy = state.cy;
+  const Rw = state.radius - state.ballR;
+  const rr = Rw * 0.995; // seated on the outer radius
+  const speed = state.speed;
+  const ratio = Math.min(1, g.caustic / rr);
+  // Shared offset from the radial (center-ward) direction — identical for all balls.
+  const headingOffset = Math.PI - Math.asin(ratio);
+  const delay = state.relayPhase * g.period;
+  const base = state.heading; // Heading slider rotates the whole starting ring.
+
+  for (let i = 0; i < n; i++) {
+    const phi = base + (i * 2 * Math.PI) / n;
+    const x = cx + Math.cos(phi) * rr;
+    const y = cy + Math.sin(phi) * rr;
+    const delta = phi + headingOffset;
+    state.x[i] = x;
+    state.y[i] = y;
+    state.ox[i] = x;
+    state.oy[i] = y;
+    state.vx[i] = Math.cos(delta) * speed;
+    state.vy[i] = Math.sin(delta) * speed;
+    state.startAt[i] = i * delay;
+    state.colors[i] = colorFromOrigin(x, y, i, n);
+  }
+}
+
+/**
+ * "Crazy Circle" illusion (a Tusi couple). Confine dot k to the diameter at angle
+ * θ_k = π·k/N and place it at signed radius A·cos(phase − θ_k). At every phase the
+ * whole set lies on the circle r = A·cos(θ − phase): a circle that passes through
+ * the center and touches the rim, rotating rigidly. Each dot really travels a
+ * straight line through the center; the rotating ring is pure illusion. Kinematic
+ * (not billiard-integrated) so the geometry stays mathematically exact.
+ */
+function buildIllusion(n) {
+  const amp = Math.max(0, state.radius - state.ballR);
+  state.illAmp = amp;
+  state.speed = launchSpeed();
+  state.illOmega = amp > 0 ? state.speed / amp : 0;
+  state.illPhase = 0;
+
+  const cx = state.cx;
+  const cy = state.cy;
+  for (let k = 0; k < n; k++) {
+    const theta = (Math.PI * k) / n;
+    const r = amp * Math.cos(theta); // phase 0 → the rim-and-center-touching circle
+    const x = cx + r * Math.cos(theta);
+    const y = cy + r * Math.sin(theta);
+    state.x[k] = x;
+    state.y[k] = y;
+    state.ox[k] = x;
+    state.oy[k] = y;
+    state.vx[k] = 0;
+    state.vy[k] = 0;
+    state.colors[k] = colorFromOrigin(x, y, k, n);
+  }
+}
+
+function updateIllusionPositions() {
+  const n = state.count;
+  const cx = state.cx;
+  const cy = state.cy;
+  const amp = state.illAmp;
+  const ph = state.illPhase;
+  for (let k = 0; k < n; k++) {
+    const theta = (Math.PI * k) / n;
+    const r = amp * Math.cos(ph - theta);
+    state.x[k] = cx + r * Math.cos(theta);
+    state.y[k] = cy + r * Math.sin(theta);
   }
 }
 
@@ -1637,10 +1828,24 @@ function advanceBall(i, h) {
 function step(dt) {
   const n = state.count;
 
+  // Crazy-Circle illusion: kinematic Tusi couple, positions set analytically.
+  if (state.illusion) {
+    state.illPhase += state.illOmega * dt;
+    updateIllusionPositions();
+    return;
+  }
+
+  const relay = state.relay;
+  if (relay) state.simTime += dt;
+  const startAt = state.startAt;
+
   // Free flight (no ball–ball collisions): exact continuous reflection, so one
   // pass handles any speed and the pattern depends only on elapsed time.
   if (!(state.collideBalls && n <= COLLISION_LIMIT)) {
-    for (let i = 0; i < n; i++) advanceBall(i, dt);
+    for (let i = 0; i < n; i++) {
+      if (relay && state.simTime < startAt[i]) continue; // still parked on the rim
+      advanceBall(i, dt);
+    }
     return;
   }
 
@@ -1649,7 +1854,10 @@ function step(dt) {
   const sub = Math.min(8, Math.max(1, Math.ceil(travel / (state.radius * 0.5))));
   const h = dt / sub;
   for (let s = 0; s < sub; s++) {
-    for (let i = 0; i < n; i++) advanceBall(i, h);
+    for (let i = 0; i < n; i++) {
+      if (relay && state.simTime < startAt[i]) continue;
+      advanceBall(i, h);
+    }
     const passes = n > 8000 ? 3 : n > 2000 ? 2 : 1;
     for (let p = 0; p < passes; p++) resolveCollisions();
     for (let i = 0; i < n; i++) constrainVessel(i);
@@ -2670,6 +2878,12 @@ function bindUI() {
   // Velocity scales each ball's current speed in place; directions and positions stay.
   ui.velocity.addEventListener("input", () => {
     refreshLabels();
+    if (state.illusion) {
+      // Retune spin rate without a phase jump (illPhase keeps accumulating).
+      state.speed = launchSpeed();
+      state.illOmega = state.illAmp > 0 ? state.speed / state.illAmp : 0;
+      return;
+    }
     if (state3d.enabled) {
       const next = velocityMultiplierFromSlider() * 1.1;
       const prev = state3d.speed || next;
@@ -2758,6 +2972,21 @@ function bindUI() {
   };
   ui.orbitP.addEventListener("input", onOrbitParam);
   ui.orbitQ.addEventListener("input", onOrbitParam);
+
+  ui.relay.addEventListener("change", () => {
+    updateOrbitReadout();
+    if (ui.orbit.checked) rebuild(ballCountFromSlider());
+  });
+  ui.relayPhase.addEventListener("input", () => {
+    updateOrbitReadout();
+  });
+  ui.relayPhase.addEventListener("change", () => {
+    if (ui.orbit.checked && ui.relay.checked) rebuild(ballCountFromSlider());
+  });
+
+  ui.illusion.addEventListener("change", () => {
+    rebuild(ballCountFromSlider());
+  });
 
   ui.restart.addEventListener("click", () => {
     rebuild(ballCountFromSlider());
